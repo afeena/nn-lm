@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import time
 from torch.autograd import Variable
 import torch.optim as optim
 import numpy as np
@@ -35,23 +36,36 @@ class LM(nn.Module):
 
 
 class LMTrainer():
-    def __init__(self):
+    def __init__(self, seq_length):
         self.corpus = IndexMap()
         self.model = None
-        self.input = []
-        self.max_len = 0
+        self.max_len = seq_length
 
-    def read_corpus(self, filename):
+    def build_vocab(self, filename, vocab = False):
+        if vocab:
+            with open(filename) as tf:
+                for word in tf:
+                        self.corpus.add_wrd(str.lower(word))
+        else:
+            with open(filename) as tf:
+                for sent in tf:
+                    for word in sent.split():
+                        self.corpus.add_wrd(str.lower(word))
+
+    def prepare_data(self, filename):
+        data = []
         with open(filename) as tf:
             for sent in tf:
                 vec = []
                 for word in sent.split():
-                    idx = self.corpus.add_wrd(str.lower(word))
+                    idx = self.corpus.get_idx_by_wrd(word)
                     vec.append(idx)
-                self.input.append(vec)
-                if len(vec)>self.max_len:
-                    self.max_len = len(vec)
-
+                tens = torch.LongTensor(vec)
+                if len(vec) > self.max_len:
+                    tens.narrow(0, 0, self.max_len)
+                data.append(tens)
+        data = pad_sequence(data).view(-1)
+        return data
 
     def get_1h_vector(self, word):
         dim = len(self.corpus)
@@ -59,31 +73,72 @@ class LMTrainer():
         vector[self.corpus.get_idx_by_wrd(word)] = 1
 
 
-    def train(self, n_epoch = 1):
-        b_size = 32
-        self.model = LM(256, len(self.corpus), 100, bs=32)
+    def train(self,
+              train_file,
+              test_file,
+              n_epoch = 1,
+              batch_size = 32,
+              hidden_size = 256,
+              emb_dim = 100,
+              learning_rate = 0.001
+              ):
+
+        lr = learning_rate
+        self.model = LM(hidden_size, len(self.corpus), emb_dim, bs=batch_size)
+
         loss_function = nn.CrossEntropyLoss()
-        optimizer = optim.Adam(self.model.parameters(), lr=0.001)
-        num_batches = len(self.input) // b_size
+        optimizer = optim.Adam(self.model.parameters(), lr=lr)
+
+        train_data = self.prepare_data(train_file)
+        test_data = self.prepare_data(test_file)
+
+        num_batches = len(train_data) // (batch_size*self.max_len)
+
+        total_loss = 0
+        start_time = time.time()
         for epoch in range(0, n_epoch):
             for i in range(num_batches):
-                batch = [torch.LongTensor(sent) for sent in self.input[i*b_size:i*b_size+b_size]]
-                target = [torch.LongTensor(sent) for sent in self.input[i*b_size+1:i*b_size+b_size+1]]
-                
+                batch = train_data[i*self.max_len:i*self.max_len+self.max_len*batch_size]
+                target = train_data[i*self.max_len+1:i*self.max_len+1+self.max_len*batch_size]
+
                 self.model.zero_grad()
 
-                inpt = Variable(pad_sequence(batch, batch_first=True).transpose(0,1))
-                trgt = Variable(pad_sequence(target, batch_first=True).view(-1))
+                inpt = Variable(batch.view(batch_size, -1)).transpose(0,1)
 
                 res_scores, hidden = self.model(inpt)
-                loss = loss_function(res_scores.view(-1, len(self.corpus)), trgt)
+                loss = loss_function(res_scores.view(-1, len(self.corpus)), target)
                 loss.backward(retain_graph=True)
                 optimizer.step()
-                print("epoch {}/{} batch {}/{} PP: {}".format(epoch, n_epoch, i, num_batches, math.exp(loss.item())))
+
+                total_loss+=loss.item()
+                if i>0 and i%20 == 0:
+                    end = time.time() - start_time
+                    print("epoch {}/{} batch {}/{} PP: {} time {}".format(epoch, n_epoch, i, num_batches, math.exp(total_loss/i), end))
+                    start_time = time.time()
+
+            print("epoch {}/{} PP: {}".format(epoch, n_epoch, math.exp(total_loss / num_batches)))
+
+        print("========== eval ============")
+        self.model.eval()
+        total_loss = 0
+        self.model.init_hiddent()
+        num_batches = len(test_data) // (batch_size * self.max_len)
+        with torch.no_grad():
+            for i in range(num_batches):
+                batch = test_data[i * self.max_len:i * self.max_len + self.max_len * batch_size]
+                target = test_data[i * self.max_len + 1:i * self.max_len + 1 + self.max_len * batch_size]
+
+                inpt = Variable(batch.view(batch_size, -1)).transpose(0, 1)
+
+                res_scores, hidden = self.model(inpt)
+                loss = loss_function(res_scores, target)
+                total_loss+=loss.item()
+        print(math.exp(total_loss)/num_batches)
+
 
 
 
 if __name__ == "__main__":
-    trainer = LMTrainer()
-    trainer.read_corpus("data/train.corpus")
-    trainer.train(1)
+    trainer = LMTrainer(35)
+    trainer.build_vocab("data/train.corpus.small")
+    trainer.train("data/train.corpus.small", "data/test.corpus.small")
