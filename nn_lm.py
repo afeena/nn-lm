@@ -22,17 +22,16 @@ class LM(nn.Module):
         self.lstm = nn.LSTM(embd_dim, hidden_dim)
 
         self.ff = nn.Linear(hidden_dim, vocab_size)
-        self.hidden = self.init_hidden(bs)
 
     def init_hidden(self, bsz):
         return (Variable(torch.zeros([1, bsz, self.hidden_dim])),
                 Variable(torch.zeros([1, bsz, self.hidden_dim])))
 
-    def forward(self, sentence):
+    def forward(self, sentence, hidden):
         embd = self.word_embd(sentence)
-        out, self.hidden = self.lstm(embd, self.hidden)
+        out, hidden = self.lstm(embd, hidden)
         decoded = self.ff(out.view(out.size(0) * out.size(1), out.size(2)))
-        return decoded.view(out.size(0), out.size(1), decoded.size(1)), self.hidden
+        return decoded.view(out.size(0), out.size(1), decoded.size(1)), hidden
 
 
 class LMTrainer():
@@ -51,20 +50,24 @@ class LMTrainer():
                 for sent in tf:
                     for word in sent.split():
                         self.corpus.add_wrd(str.lower(word))
+        self.corpus.add_wrd("</s>")
 
     def prepare_data(self, filename):
         data = []
+        end_tok = self.corpus.get_idx_by_wrd("</s>")
         with open(filename) as tf:
             for sent in tf:
                 vec = []
                 for word in sent.split():
                     idx = self.corpus.get_idx_by_wrd(word)
                     vec.append(idx)
-                tens = torch.LongTensor(vec)
+                vec.append(end_tok)
+
                 if len(vec) > self.max_len:
-                    tens.narrow(0, 0, self.max_len)
-                data.append(tens)
-        data = pad_sequence(data).view(-1)
+                    vec = vec[:self.max_len-1]
+                    vec.append(end_tok)
+
+                data.append(vec)
         return data
 
     def get_1h_vector(self, word):
@@ -92,26 +95,29 @@ class LMTrainer():
         train_data = self.prepare_data(train_file)
         test_data = self.prepare_data(test_file)
 
-        num_batches = len(train_data) // (batch_size*self.max_len)
+        num_batches = len(train_data) // (batch_size)
 
         total_loss = 0
         start_time = time.time()
+        hidden = self.model.init_hidden(batch_size)
         for epoch in range(0, n_epoch):
             for i in range(num_batches):
-                batch = train_data[i*self.max_len:i*self.max_len+self.max_len*batch_size]
-                target = train_data[i*self.max_len+1:i*self.max_len+1+self.max_len*batch_size]
+                batch = [torch.LongTensor(s[:-1]) for s in train_data[i*batch_size:i*batch_size+batch_size]]
+                target = [torch.LongTensor(s[1:]) for s in train_data[i*batch_size:i*batch_size+batch_size]]
 
                 self.model.zero_grad()
 
-                inpt = Variable(batch.view(batch_size, -1)).transpose(0,1)
 
-                res_scores, hidden = self.model(inpt)
-                loss = loss_function(res_scores.view(-1, len(self.corpus)), target)
+                inpt = Variable(pad_sequence(batch, batch_first=True), requires_grad = False).transpose(0,1)
+                trgt = Variable(pad_sequence(target),requires_grad = False).view(-1)
+
+                res_scores, hidden = self.model(inpt, hidden)
+                loss = loss_function(res_scores.view(-1, len(self.corpus)), trgt)
                 loss.backward(retain_graph=True)
                 optimizer.step()
 
                 total_loss+=loss.item()
-                if i>0 and i%20 == 0:
+                if i>0 and i%2 == 0:
                     end = time.time() - start_time
                     print("epoch {}/{} batch {}/{} PP: {} time {}".format(epoch, n_epoch, i, num_batches, math.exp(total_loss/i), end))
                     start_time = time.time()
