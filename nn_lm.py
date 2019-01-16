@@ -36,7 +36,7 @@ class LM(nn.Module):
 
 class LMTrainer():
     def __init__(self, seq_length):
-        self.corpus = IndexMap()
+        self.corpus = IndexMap(start_idx=1)
         self.model = None
         self.max_len = seq_length
 
@@ -44,13 +44,12 @@ class LMTrainer():
         if vocab:
             with open(filename) as tf:
                 for word in tf:
-                        self.corpus.add_wrd(str.lower(word))
+                        self.corpus.add_wrd(word)
         else:
             with open(filename) as tf:
                 for sent in tf:
                     for word in sent.split():
                         self.corpus.add_wrd(str.lower(word))
-        self.corpus.add_wrd("</s>")
 
     def prepare_data(self, filename):
         data = []
@@ -74,6 +73,12 @@ class LMTrainer():
         dim = len(self.corpus)
         vector = np.zeros(dim)
         vector[self.corpus.get_idx_by_wrd(word)] = 1
+
+    def repackage_hidden(self, h):
+        if isinstance(h, torch.Tensor):
+            return h.detach()
+        else:
+            return tuple(self.repackage_hidden(v) for v in h)
 
 
     def train(self,
@@ -105,11 +110,11 @@ class LMTrainer():
                 batch = [torch.LongTensor(s[:-1]) for s in train_data[i*batch_size:i*batch_size+batch_size]]
                 target = [torch.LongTensor(s[1:]) for s in train_data[i*batch_size:i*batch_size+batch_size]]
 
+                hidden = self.repackage_hidden(hidden)
                 self.model.zero_grad()
 
-
-                inpt = Variable(pad_sequence(batch, batch_first=True), requires_grad = False).transpose(0,1)
-                trgt = Variable(pad_sequence(target),requires_grad = False).view(-1)
+                inpt = Variable(pad_sequence(batch, batch_first=True, padding_value=0), requires_grad = False).transpose(0,1)
+                trgt = Variable(pad_sequence(target, padding_value=0),requires_grad = False).view(-1)
 
                 res_scores, hidden = self.model(inpt, hidden)
                 loss = loss_function(res_scores.view(-1, len(self.corpus)), trgt)
@@ -117,7 +122,7 @@ class LMTrainer():
                 optimizer.step()
 
                 total_loss+=loss.item()
-                if i>0 and i%2 == 0:
+                if i>0 and i%20 == 0:
                     end = time.time() - start_time
                     print("epoch {}/{} batch {}/{} PP: {} time {}".format(epoch, n_epoch, i, num_batches, math.exp(total_loss/i), end))
                     start_time = time.time()
@@ -127,24 +132,25 @@ class LMTrainer():
         print("========== eval ============")
         self.model.eval()
         total_loss = 0
-        self.model.init_hiddent()
-        num_batches = len(test_data) // (batch_size * self.max_len)
+        self.model.init_hidden(batch_size)
+        num_batches = len(test_data) // batch_size
         with torch.no_grad():
             for i in range(num_batches):
-                batch = test_data[i * self.max_len:i * self.max_len + self.max_len * batch_size]
-                target = test_data[i * self.max_len + 1:i * self.max_len + 1 + self.max_len * batch_size]
+                batch = [torch.LongTensor(s[:-1]) for s in test_data[i * batch_size:i * batch_size + batch_size]]
+                target = [torch.LongTensor(s[1:]) for s in test_data[i * batch_size:i * batch_size + batch_size]]
 
-                inpt = Variable(batch.view(batch_size, -1)).transpose(0, 1)
+                inpt = Variable(pad_sequence(batch, batch_first=True, padding_value=0), requires_grad=False).transpose(0, 1)
+                trgt = Variable(pad_sequence(target, padding_value=0), requires_grad=False).view(-1)
 
-                res_scores, hidden = self.model(inpt)
-                loss = loss_function(res_scores, target)
+                res_scores, hidden = self.model(inpt, hidden)
+                loss = loss_function(res_scores.view(-1, len(self.corpus)), trgt)
                 total_loss+=loss.item()
-        print(math.exp(total_loss)/num_batches)
+        print("test PP: ",math.exp(total_loss / num_batches ))
 
 
 
 
 if __name__ == "__main__":
     trainer = LMTrainer(35)
-    trainer.build_vocab("data/train.corpus.small")
-    trainer.train("data/train.corpus.small", "data/test.corpus.small")
+    trainer.build_vocab("data/train.corpus")
+    trainer.train("data/train.corpus", "data/test.corpus")

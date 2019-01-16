@@ -5,12 +5,12 @@ class IndexMap:
   It allows retrieve queries in both direction (wrd->idx, and idx->wrd)
   """
 
-  def __init__(self, vocabs_file=None):
+  def __init__(self, vocabs_file=None, start_idx = 0):
     """
     :param vocabs_file: A string, vocabs file path to load
     """
 
-    self.idx = 0 # unique index for each word
+    self.idx = start_idx # unique index for each word
 
     self.wrd_to_idx = {}
     self.idx_to_wrd = {}
