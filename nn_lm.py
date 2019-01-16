@@ -53,10 +53,11 @@ class LMTrainer():
 
     def prepare_data(self, filename):
         data = []
+        start_tok = self.corpus.get_idx_by_wrd("<s>")
         end_tok = self.corpus.get_idx_by_wrd("</s>")
         with open(filename) as tf:
             for sent in tf:
-                vec = []
+                vec = [start_tok]
                 for word in sent.split():
                     idx = self.corpus.get_idx_by_wrd(word)
                     vec.append(idx)
@@ -148,9 +149,33 @@ class LMTrainer():
         print("test PP: ",math.exp(total_loss / num_batches ))
 
 
+    def generate_text(self, start_word = "<s>", num_words = 5):
+
+        res = [start_word]
+
+        with torch.no_grad():
+            hidden = self.model.init_hidden(1)
+
+            input = torch.LongTensor([self.corpus.get_idx_by_wrd(start_word)]).unsqueeze(0)
+
+            for i in range(num_words):
+                prediction, hidden = self.model(input, hidden)
+                prediction = prediction.squeeze().detach()
+                decoder_output = prediction
+                max_prob = 0
+                best_next = -1
+                for i,w in enumerate(decoder_output):
+                    if w>max_prob:
+                        best_next = i
+                res.append(best_next)
+                input = torch.LongTensor([best_next]).unsqueeze(0)
+
+        for idx in res:
+            print(self.corpus.get_wrd_by_idx(idx))
 
 
 if __name__ == "__main__":
-    trainer = LMTrainer(35)
+    trainer = LMTrainer(50)
     trainer.build_vocab("data/train.corpus")
     trainer.train("data/train.corpus", "data/test.corpus")
+    trainer.generate_text()
