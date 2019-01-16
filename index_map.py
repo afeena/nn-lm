@@ -61,6 +61,7 @@ class IndexMap:
       self.idx += 1
 
     self.wrd_freq[self.wrd_to_idx[wrd]] += 1
+    return self.wrd_to_idx[wrd]
 
   def get_wrd_by_idx(self, idx):
     """Return the word of the given index
