@@ -25,6 +25,9 @@ class LM(nn.Module):
 
         self.ff = nn.Linear(hidden_dim, vocab_size)
 
+        if torch.cuda.is_available():
+            self.cuda()
+
     def init_hidden(self, bsz):
         return (Variable(torch.zeros([1, bsz, self.hidden_dim])),
                 Variable(torch.zeros([1, bsz, self.hidden_dim])))
@@ -47,7 +50,7 @@ class LM(nn.Module):
 
 class LMTrainer():
     def __init__(self, seq_length):
-        self.corpus = IndexMap(start_idx=1)
+        self.corpus = IndexMap(start_idx=0)
         self.model = None
         self.max_len = seq_length
         self.loss_function = nn.CrossEntropyLoss()
@@ -93,13 +96,17 @@ class LMTrainer():
 
     def train(self,
               train_file,
-              test_file,
               n_epoch = 1,
               batch_size = 32,
               hidden_size = 256,
               emb_dim = 100,
-              learning_rate = 0.001
+              learning_rate = 0.01
               ):
+
+        if torch.cuda.is_available():
+            device = torch.device('cuda')
+        else:
+            device = torch.device('cpu')
 
         lr = learning_rate
         self.model = LM(hidden_size, len(self.corpus), emb_dim, bs=batch_size)
@@ -121,8 +128,8 @@ class LMTrainer():
                 hidden = self.repackage_hidden(hidden)
                 self.model.zero_grad()
 
-                inpt = batch.view(batch_size, -1).transpose(0,1)
-                trgt = target.view(-1)
+                inpt = batch.view(batch_size, -1).transpose(0,1).to(device=device)
+                trgt = target.view(-1).to(device=device)
 
                 res_scores, hidden = self.model(inpt, hidden)
                 loss = self.loss_function(res_scores.view(-1, len(self.corpus)), trgt)
@@ -135,8 +142,15 @@ class LMTrainer():
                     print("epoch {}/{} batch {}/{} PP: {} time {}".format(epoch, n_epoch, i, num_batches, math.exp(total_loss.item()/20), end))
                     start_time = time.time()
                     total_loss = 0
+        self.model.save_model("models/rnn")
 
     def eval(self, test_file, batch_size):
+
+        if torch.cuda.is_available():
+            device = torch.device('cuda')
+        else:
+            device = torch.device('cpu')
+
         test_data = self.prepare_data(test_file)
         self.model.eval()
 
@@ -150,19 +164,19 @@ class LMTrainer():
                 batch = test_data[i * batch_size:i * batch_size + self.max_len * batch_size]
                 target = test_data[i * batch_size + 1:i * batch_size + 1 + self.max_len * batch_size]
 
-                inpt = batch.view(batch_size, -1).transpose(0, 1)
-                trgt = target.view(-1)
+                inpt = batch.view(batch_size, -1).transpose(0, 1).to(device=device)
+                trgt = target.view(-1).to(device=device)
 
                 res_scores, hidden = self.model(inpt, hidden)
                 loss = self.loss_function(res_scores.view(-1, len(self.corpus)), trgt)
                 total_loss += loss.item()
 
-        print(math.exp(total_loss / num_batches))
+        print(math.exp(total_loss /  num_batches))
 
         return total_loss / test_data.size()[0]
 
 
-    def generate_text(self, start_word = "<s>", num_words = 5):
+    def generate_text(self, start_word = "man", num_words = 5):
 
             res = [start_word]
 
@@ -191,12 +205,12 @@ if __name__ == "__main__":
     arg_parser = argparse.ArgumentParser()
 
 
-    arg_parser.add_argument("--train", default="data/train.corpus.small")
-    arg_parser.add_argument("--test", default="data/test.corpus")
+    arg_parser.add_argument("--train", default="data/ptb.train.txt")
+    arg_parser.add_argument("--test", default="data/ptb.test.txt")
     arg_parser.add_argument("--vocab", default = None)
     arg_parser.add_argument("--max-seq-length", default=50)
     arg_parser.add_argument("--bs", default=32)
-    arg_parser.add_argument("--epochs", default=1)
+    arg_parser.add_argument("--epochs", default=10)
     arg_parser.add_argument("--nlayers", default=1)
     arg_parser.add_argument("--hs", default=256)
     arg_parser.add_argument("--embd", default=100)
@@ -211,8 +225,9 @@ if __name__ == "__main__":
     else:
         trainer.build_vocab(args.train)
 
-    trainer.train(args.train, args.test, n_epoch=args.epochs, batch_size=args.bs,
+    trainer.train(args.train, n_epoch=args.epochs, batch_size=args.bs,
                   hidden_size=args.hs, emb_dim=args.embd, learning_rate=args.lr)
     trainer.eval(args.test, 10)
+
 
     trainer.generate_text()
