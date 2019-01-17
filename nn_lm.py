@@ -35,6 +35,15 @@ class LM(nn.Module):
         decoded = self.ff(out.view(out.size(0) * out.size(1), out.size(2)))
         return decoded.view(out.size(0), out.size(1), decoded.size(1)), hidden
 
+    def save_model(self, path):
+        torch.save(self, path)
+
+    def load_model(self, path):
+        model = torch.load(path)
+        model.eval()
+        return model
+
+
 
 class LMTrainer():
     def __init__(self, seq_length):
