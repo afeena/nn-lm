@@ -135,7 +135,7 @@ class LMTrainer():
 
         total_loss = 0
         hidden = self.model.init_hidden(batch_size)
-        num_batches = len(test_data) // batch_size
+        num_batches = test_data.size()[0] // (batch_size * self.max_len)
         with torch.no_grad():
             for i in range(num_batches):
                 batch = test_data[i * batch_size:i * batch_size + self.max_len * batch_size]
@@ -148,8 +148,8 @@ class LMTrainer():
                 loss = self.loss_function(res_scores.view(-1, len(self.corpus)), trgt)
                 total_loss += loss.item()
 
-        print(math.exp(total_loss / test_data.size()[0]))
-        
+        print(math.exp(total_loss / num_batches))
+
         return total_loss / test_data.size()[0]
 
 
@@ -204,6 +204,6 @@ if __name__ == "__main__":
 
     trainer.train(args.train, args.test, n_epoch=args.epochs, batch_size=args.bs,
                   hidden_size=args.hs, emb_dim=args.embd, learning_rate=args.lr)
-    trainer.eval(args.test, args.bs)
+    trainer.eval(args.test, 10)
 
     trainer.generate_text()
