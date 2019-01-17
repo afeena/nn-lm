@@ -1,15 +1,17 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import time
 from torch.autograd import Variable
 import torch.optim as optim
-import numpy as np
-from torch.nn.utils.rnn import pack_padded_sequence, pad_sequence
-import math
+from torch.nn.utils.rnn import pad_sequence
 
+import numpy as np
+import math
+import argparse
 
 from index_map import IndexMap
+
+
 torch.manual_seed(1)
 
 class LM(nn.Module):
@@ -39,6 +41,7 @@ class LMTrainer():
         self.corpus = IndexMap(start_idx=1)
         self.model = None
         self.max_len = seq_length
+        self.loss_function = nn.CrossEntropyLoss()
 
     def build_vocab(self, filename, vocab = False):
         if vocab:
@@ -95,11 +98,10 @@ class LMTrainer():
         lr = learning_rate
         self.model = LM(hidden_size, len(self.corpus), emb_dim, bs=batch_size)
 
-        loss_function = nn.CrossEntropyLoss()
         optimizer = optim.Adam(self.model.parameters(), lr=lr)
 
         train_data = self.prepare_data(train_file)
-        test_data = self.prepare_data(test_file)
+
 
         num_batches = len(train_data) // (batch_size)
 
@@ -118,7 +120,7 @@ class LMTrainer():
                 trgt = Variable(pad_sequence(target, padding_value=0),requires_grad = False).view(-1)
 
                 res_scores, hidden = self.model(inpt, hidden)
-                loss = loss_function(res_scores.view(-1, len(self.corpus)), trgt)
+                loss = self.loss_function(res_scores.view(-1, len(self.corpus)), trgt)
                 loss.backward(retain_graph=True)
                 optimizer.step()
 
@@ -130,52 +132,81 @@ class LMTrainer():
 
             print("epoch {}/{} PP: {}".format(epoch, n_epoch, math.exp(total_loss / num_batches)))
 
-        print("========== eval ============")
+    def eval(self, test_file, batch_size):
+        test_data = self.prepare_data(test_file)
         self.model.eval()
+
+        print("========== eval ============")
+
         total_loss = 0
-        self.model.init_hidden(batch_size)
+        hidden = self.model.init_hidden(batch_size)
         num_batches = len(test_data) // batch_size
         with torch.no_grad():
             for i in range(num_batches):
                 batch = [torch.LongTensor(s[:-1]) for s in test_data[i * batch_size:i * batch_size + batch_size]]
                 target = [torch.LongTensor(s[1:]) for s in test_data[i * batch_size:i * batch_size + batch_size]]
 
-                inpt = Variable(pad_sequence(batch, batch_first=True, padding_value=0), requires_grad=False).transpose(0, 1)
+                inpt = Variable(pad_sequence(batch, batch_first=True, padding_value=0), requires_grad=False).transpose(
+                    0, 1)
                 trgt = Variable(pad_sequence(target, padding_value=0), requires_grad=False).view(-1)
 
                 res_scores, hidden = self.model(inpt, hidden)
-                loss = loss_function(res_scores.view(-1, len(self.corpus)), trgt)
-                total_loss+=loss.item()
-        print("test PP: ",math.exp(total_loss / num_batches ))
+                loss = self.loss_function(res_scores.view(-1, len(self.corpus)), trgt)
+                total_loss += loss.item()
+        print("test PP: ", math.exp(total_loss / num_batches))
 
 
     def generate_text(self, start_word = "<s>", num_words = 5):
 
-        res = [start_word]
+            res = [start_word]
 
-        with torch.no_grad():
-            hidden = self.model.init_hidden(1)
+            with torch.no_grad():
+                hidden = self.model.init_hidden(1)
 
-            input = torch.LongTensor([self.corpus.get_idx_by_wrd(start_word)]).unsqueeze(0)
+                input = torch.LongTensor([self.corpus.get_idx_by_wrd(start_word)]).unsqueeze(0)
 
-            for i in range(num_words):
-                prediction, hidden = self.model(input, hidden)
-                prediction = prediction.squeeze().detach()
-                decoder_output = prediction
-                max_prob = 0
-                best_next = -1
-                for i,w in enumerate(decoder_output):
-                    if w>max_prob:
-                        best_next = i
-                res.append(best_next)
-                input = torch.LongTensor([best_next]).unsqueeze(0)
+                for i in range(num_words):
+                    prediction, hidden = self.model(input, hidden)
+                    prediction = prediction.squeeze().detach()
+                    decoder_output = prediction
+                    max_prob = 0
+                    best_next = -1
+                    for i,w in enumerate(decoder_output):
+                        if w>max_prob:
+                            best_next = i
+                    res.append(best_next)
+                    input = torch.LongTensor([best_next]).unsqueeze(0)
 
-        for idx in res:
-            print(self.corpus.get_wrd_by_idx(idx))
+            for idx in res:
+                print(self.corpus.get_wrd_by_idx(idx))
 
 
 if __name__ == "__main__":
-    trainer = LMTrainer(50)
-    trainer.build_vocab("data/train.corpus")
-    trainer.train("data/train.corpus", "data/test.corpus")
+    arg_parser = argparse.ArgumentParser()
+
+
+    arg_parser.add_argument("--train", default="data/train.corpus.small")
+    arg_parser.add_argument("--test", default="data/test.corpus.small")
+    arg_parser.add_argument("--vocab", default = None)
+    arg_parser.add_argument("--max-seq-length", default=50)
+    arg_parser.add_argument("--bs", default=32)
+    arg_parser.add_argument("--epochs", default=1)
+    arg_parser.add_argument("--nlayers", default=1)
+    arg_parser.add_argument("--hs", default=256)
+    arg_parser.add_argument("--embd", default=100)
+    arg_parser.add_argument("--lr", default=0.001)
+
+    args = arg_parser.parse_args()
+
+    trainer = LMTrainer(args.max_seq_length)
+
+    if args.vocab:
+        trainer.build_vocab(args.vocab, vocab=True)
+    else:
+        trainer.build_vocab(args.train)
+
+    trainer.train(args.train, args.test, n_epoch=args.epochs, batch_size=args.bs,
+                  hidden_size=args.hs, emb_dim=args.embd, learning_rate=args.lr)
+    trainer.eval(args.test, args.bs)
+
     trainer.generate_text()
