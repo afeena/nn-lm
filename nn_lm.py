@@ -47,7 +47,7 @@ class LMTrainer():
         if vocab:
             with open(filename) as tf:
                 for word in tf:
-                        self.corpus.add_wrd(word)
+                        self.corpus.add_wrd(str.lower(word))
         else:
             with open(filename) as tf:
                 for sent in tf:
@@ -55,22 +55,19 @@ class LMTrainer():
                         self.corpus.add_wrd(str.lower(word))
 
     def prepare_data(self, filename):
-        data = []
-        start_tok = self.corpus.get_idx_by_wrd("<s>")
+        data = torch.LongTensor()
         end_tok = self.corpus.get_idx_by_wrd("</s>")
         with open(filename) as tf:
             for sent in tf:
-                vec = [start_tok]
+                vec = []
                 for word in sent.split():
-                    idx = self.corpus.get_idx_by_wrd(word)
+                    idx = self.corpus.get_idx_by_wrd(str.lower(word))
                     vec.append(idx)
                 vec.append(end_tok)
 
-                if len(vec) > self.max_len:
-                    vec = vec[:self.max_len-1]
-                    vec.append(end_tok)
+                vec = torch.LongTensor(vec)
+                data = torch.cat((data,vec))
 
-                data.append(vec)
         return data
 
     def get_1h_vector(self, word):
@@ -102,35 +99,33 @@ class LMTrainer():
 
         train_data = self.prepare_data(train_file)
 
-
-        num_batches = len(train_data) // (batch_size)
+        num_batches = train_data.size()[0] // (batch_size * self.max_len)
 
         total_loss = 0
         start_time = time.time()
         hidden = self.model.init_hidden(batch_size)
         for epoch in range(0, n_epoch):
             for i in range(num_batches):
-                batch = [torch.LongTensor(s[:-1]) for s in train_data[i*batch_size:i*batch_size+batch_size]]
-                target = [torch.LongTensor(s[1:]) for s in train_data[i*batch_size:i*batch_size+batch_size]]
+                batch = train_data[i*batch_size:i*batch_size+self.max_len*batch_size]
+                target = train_data[i*batch_size+1:i*batch_size+1+self.max_len*batch_size]
 
                 hidden = self.repackage_hidden(hidden)
                 self.model.zero_grad()
 
-                inpt = Variable(pad_sequence(batch, batch_first=True, padding_value=0), requires_grad = False).transpose(0,1)
-                trgt = Variable(pad_sequence(target, padding_value=0),requires_grad = False).view(-1)
+                inpt = batch.view(batch_size, -1).transpose(0,1)
+                trgt = target.view(-1)
 
                 res_scores, hidden = self.model(inpt, hidden)
                 loss = self.loss_function(res_scores.view(-1, len(self.corpus)), trgt)
-                loss.backward(retain_graph=True)
+                loss.backward()
                 optimizer.step()
 
-                total_loss+=loss.item()
+                total_loss+=loss.data
                 if i>0 and i%20 == 0:
                     end = time.time() - start_time
-                    print("epoch {}/{} batch {}/{} PP: {} time {}".format(epoch, n_epoch, i, num_batches, math.exp(total_loss/i), end))
+                    print("epoch {}/{} batch {}/{} PP: {} time {}".format(epoch, n_epoch, i, num_batches, math.exp(total_loss.item()/20), end))
                     start_time = time.time()
-
-            print("epoch {}/{} PP: {}".format(epoch, n_epoch, math.exp(total_loss / num_batches)))
+                    total_loss = 0
 
     def eval(self, test_file, batch_size):
         test_data = self.prepare_data(test_file)
@@ -143,17 +138,19 @@ class LMTrainer():
         num_batches = len(test_data) // batch_size
         with torch.no_grad():
             for i in range(num_batches):
-                batch = [torch.LongTensor(s[:-1]) for s in test_data[i * batch_size:i * batch_size + batch_size]]
-                target = [torch.LongTensor(s[1:]) for s in test_data[i * batch_size:i * batch_size + batch_size]]
+                batch = test_data[i * batch_size:i * batch_size + self.max_len * batch_size]
+                target = test_data[i * batch_size + 1:i * batch_size + 1 + self.max_len * batch_size]
 
-                inpt = Variable(pad_sequence(batch, batch_first=True, padding_value=0), requires_grad=False).transpose(
-                    0, 1)
-                trgt = Variable(pad_sequence(target, padding_value=0), requires_grad=False).view(-1)
+                inpt = batch.view(batch_size, -1).transpose(0, 1)
+                trgt = target.view(-1)
 
                 res_scores, hidden = self.model(inpt, hidden)
                 loss = self.loss_function(res_scores.view(-1, len(self.corpus)), trgt)
                 total_loss += loss.item()
-        print("test PP: ", math.exp(total_loss / num_batches))
+
+        print(math.exp(total_loss / test_data.size()[0]))
+        
+        return total_loss / test_data.size()[0]
 
 
     def generate_text(self, start_word = "<s>", num_words = 5):
@@ -186,7 +183,7 @@ if __name__ == "__main__":
 
 
     arg_parser.add_argument("--train", default="data/train.corpus.small")
-    arg_parser.add_argument("--test", default="data/test.corpus.small")
+    arg_parser.add_argument("--test", default="data/test.corpus")
     arg_parser.add_argument("--vocab", default = None)
     arg_parser.add_argument("--max-seq-length", default=50)
     arg_parser.add_argument("--bs", default=32)
