@@ -15,15 +15,15 @@ from index_map import IndexMap
 torch.manual_seed(1)
 
 class LM(nn.Module):
-    def __init__(self, hidden_dim, vocab_size, embd_dim, n_layers = 1, dropout):
+    def __init__(self, hidden_dim, vocab_size, embd_dim, n_layers = 2, dropout = 0.1):
         super(LM, self).__init__()
         self.n_layers = n_layers
         self.hidden_dim = hidden_dim
         self.word_embd = nn.Embedding(vocab_size, embd_dim)
 
         self.dropout = dropout
-        self.drop = nn.Dropout(dropout=self.dropout)
-        self.lstm = nn.LSTM(embd_dim, hidden_dim, dropout=self.dropout)
+        self.drop = nn.Dropout(self.dropout)
+        self.lstm = nn.LSTM(embd_dim, hidden_dim, dropout=self.dropout, num_layers=self.n_layers)
 
         self.ff = nn.Linear(hidden_dim, vocab_size)
 
@@ -39,8 +39,8 @@ class LM(nn.Module):
         self.ff.weight.data.uniform_(-initrange, initrange)
 
     def init_hidden(self, bsz):
-        return (Variable(torch.zeros([1, bsz, self.hidden_dim])),
-                Variable(torch.zeros([1, bsz, self.hidden_dim])))
+        return (Variable(torch.zeros([self.n_layers, bsz, self.hidden_dim])),
+                Variable(torch.zeros([self.n_layers, bsz, self.hidden_dim])))
 
 
     def forward(self, sentence, hidden):
@@ -62,7 +62,7 @@ class LM(nn.Module):
 
 class LMTrainer():
     def __init__(self, seq_length):
-        self.corpus = IndexMap(start_idx=0)
+        self.corpus = IndexMap()
         self.model = None
         self.max_len = seq_length
         self.loss_function = nn.CrossEntropyLoss()
@@ -112,7 +112,8 @@ class LMTrainer():
               batch_size = 32,
               hidden_size = 256,
               emb_dim = 100,
-              learning_rate = 0.1
+              learning_rate = 0.1,
+              dropout = 0.1
               ):
 
         if torch.cuda.is_available():
@@ -121,7 +122,7 @@ class LMTrainer():
             device = torch.device('cpu')
 
         lr = learning_rate
-        self.model = LM(hidden_size, len(self.corpus), emb_dim, bs=batch_size)
+        self.model = LM(hidden_size, len(self.corpus), emb_dim, dropout=dropout)
 
         optimizer = optim.Adam(self.model.parameters(), lr=lr)
 
