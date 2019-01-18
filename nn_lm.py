@@ -15,26 +15,38 @@ from index_map import IndexMap
 torch.manual_seed(1)
 
 class LM(nn.Module):
-    def __init__(self, hidden_dim, vocab_size, embd_dim, bs=32, n_layers = 1):
+    def __init__(self, hidden_dim, vocab_size, embd_dim, n_layers = 1, dropout):
         super(LM, self).__init__()
         self.n_layers = n_layers
         self.hidden_dim = hidden_dim
         self.word_embd = nn.Embedding(vocab_size, embd_dim)
 
-        self.lstm = nn.LSTM(embd_dim, hidden_dim)
+        self.dropout = dropout
+        self.drop = nn.Dropout(dropout=self.dropout)
+        self.lstm = nn.LSTM(embd_dim, hidden_dim, dropout=self.dropout)
 
         self.ff = nn.Linear(hidden_dim, vocab_size)
 
+        self.init_weights()
+
         if torch.cuda.is_available():
             self.cuda()
+
+    def init_weights(self):
+        initrange = 0.1
+        self.word_embd.weight.data.uniform_(-initrange, initrange)
+        self.ff.bias.data.zero_()
+        self.ff.weight.data.uniform_(-initrange, initrange)
 
     def init_hidden(self, bsz):
         return (Variable(torch.zeros([1, bsz, self.hidden_dim])),
                 Variable(torch.zeros([1, bsz, self.hidden_dim])))
 
+
     def forward(self, sentence, hidden):
-        embd = self.word_embd(sentence)
+        embd = self.drop(self.word_embd(sentence))
         out, hidden = self.lstm(embd, hidden)
+        out = self.drop(out)
         decoded = self.ff(out.view(out.size(0) * out.size(1), out.size(2)))
         return decoded.view(out.size(0), out.size(1), decoded.size(1)), hidden
 
@@ -100,7 +112,7 @@ class LMTrainer():
               batch_size = 32,
               hidden_size = 256,
               emb_dim = 100,
-              learning_rate = 0.01
+              learning_rate = 0.1
               ):
 
         if torch.cuda.is_available():
@@ -142,6 +154,7 @@ class LMTrainer():
                     print("epoch {}/{} batch {}/{} PP: {} time {}".format(epoch, n_epoch, i, num_batches, math.exp(total_loss.item()/20), end))
                     start_time = time.time()
                     total_loss = 0
+            self.eval("data/ptb.valid.txt", 32)
         self.model.save_model("models/rnn")
 
     def eval(self, test_file, batch_size):
@@ -164,16 +177,15 @@ class LMTrainer():
                 batch = test_data[i * batch_size:i * batch_size + self.max_len * batch_size]
                 target = test_data[i * batch_size + 1:i * batch_size + 1 + self.max_len * batch_size]
 
+                hidden = self.repackage_hidden(hidden)
+
                 inpt = batch.view(batch_size, -1).transpose(0, 1).to(device=device)
                 trgt = target.view(-1).to(device=device)
 
                 res_scores, hidden = self.model(inpt, hidden)
-                loss = self.loss_function(res_scores.view(-1, len(self.corpus)), trgt)
-                total_loss += loss.item()
+                total_loss += len(batch) * self.loss_function(res_scores.view(-1, len(self.corpus)), trgt).item()
 
-        print(math.exp(total_loss /  num_batches))
-
-        return total_loss / test_data.size()[0]
+        print(math.exp(total_loss /  len(test_data) -1))
 
 
     def generate_text(self, start_word = "man", num_words = 5):
