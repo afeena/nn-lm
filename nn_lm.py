@@ -129,6 +129,7 @@ class LMTrainer():
 
         lr = learning_rate
         self.model = LM(hidden_size, len(self.corpus), emb_dim, dropout=dropout)
+        self.model.train()
 
         optimizer = optim.Adam(self.model.parameters(), lr=lr)
         scheduler = ReduceLROnPlateau(optimizer, 'min')
