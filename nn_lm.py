@@ -41,8 +41,12 @@ class LM(nn.Module):
         self.ff.weight.data.uniform_(-initrange, initrange)
 
     def init_hidden(self, bsz):
-        return (Variable(torch.zeros([self.n_layers, bsz, self.hidden_dim])),
-                Variable(torch.zeros([self.n_layers, bsz, self.hidden_dim])))
+        if torch.cuda.is_available():
+            device = torch.device('cuda')
+        else:
+            device = torch.device('cpu')
+        return (Variable(torch.zeros([self.n_layers, bsz, self.hidden_dim])).to(device),
+                Variable(torch.zeros([self.n_layers, bsz, self.hidden_dim])).to(device))
 
 
     def forward(self, sentence, hidden):
