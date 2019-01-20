@@ -9,6 +9,8 @@ import numpy as np
 import math
 import argparse
 
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+
 from index_map import IndexMap
 
 
@@ -112,7 +114,7 @@ class LMTrainer():
               batch_size = 32,
               hidden_size = 256,
               emb_dim = 100,
-              learning_rate = 0.1,
+              learning_rate = 10,
               dropout = 0.1
               ):
 
@@ -125,6 +127,7 @@ class LMTrainer():
         self.model = LM(hidden_size, len(self.corpus), emb_dim, dropout=dropout)
 
         optimizer = optim.Adam(self.model.parameters(), lr=lr)
+        scheduler = ReduceLROnPlateau(optimizer, 'min')
 
         train_data = self.prepare_data(train_file)
 
@@ -155,7 +158,8 @@ class LMTrainer():
                     print("epoch {}/{} batch {}/{} PP: {} time {}".format(epoch, n_epoch, i, num_batches, math.exp(total_loss.item()/20), end))
                     start_time = time.time()
                     total_loss = 0
-            self.eval("data/ptb.valid.txt", 32)
+            val_loss = self.eval("data/ptb.valid.txt", 32)
+            scheduler.step(val_loss)
         self.model.save_model("models/rnn")
 
     def eval(self, test_file, batch_size):
@@ -186,7 +190,8 @@ class LMTrainer():
                 res_scores, hidden = self.model(inpt, hidden)
                 total_loss += len(batch) * self.loss_function(res_scores.view(-1, len(self.corpus)), trgt).item()
 
-        print(math.exp(total_loss /  len(test_data) -1))
+        print(math.exp(total_loss / (len(test_data) -1)))
+        return total_loss /  (len(test_data) -1)
 
 
     def generate_text(self, start_word = "man", num_words = 5):
