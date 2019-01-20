@@ -129,7 +129,6 @@ class LMTrainer():
 
         lr = learning_rate
         self.model = LM(hidden_size, len(self.corpus), emb_dim, dropout=dropout)
-        self.model.train()
 
         optimizer = optim.Adam(self.model.parameters(), lr=lr)
         scheduler = ReduceLROnPlateau(optimizer, 'min')
@@ -164,6 +163,7 @@ class LMTrainer():
                     start_time = time.time()
                     total_loss = 0
             val_loss = self.eval("data/ptb.valid.txt", 32)
+            self.model.train()
             scheduler.step(val_loss)
         self.model.save_model("models/rnn")
 
