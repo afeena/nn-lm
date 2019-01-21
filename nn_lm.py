@@ -204,7 +204,7 @@ class LMTrainer():
                 res_scores, hidden = self.model(inpt, hidden)
                 total_loss += len(inpt) * self.loss_function(res_scores.view(-1, len(self.corpus)), trgt).item()
 
-        return total_loss / (num_batches*batch_size)
+        return total_loss / (test_data.size()[0])
 
 
     def generate_text(self, start_word = "man", num_words = 5):
