@@ -153,6 +153,7 @@ class LMTrainer():
 
                 hidden = self.repackage_hidden(hidden)
                 self.model.zero_grad()
+                optimizer.zero_grad()
 
                 inpt = batch.view(batch_size, -1).transpose(0,1).to(device=device)
                 trgt = target.view(-1).to(device=device)
@@ -160,8 +161,10 @@ class LMTrainer():
                 res_scores, hidden = self.model(inpt, hidden)
                 loss = self.loss_function(res_scores.view(-1, len(self.corpus)), trgt)
                 loss.backward()
-                optimizer.step()
-
+                
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.25)
+                optimizer.step()		
+                 
                 total_loss+=loss.data
                 if i>0 and i%20 == 0:
                     end = time.time() - batch_time
@@ -202,9 +205,9 @@ class LMTrainer():
                 trgt = target.view(-1).to(device=device)
 
                 res_scores, hidden = self.model(inpt, hidden)
-                total_loss += len(inpt) * self.loss_function(res_scores.view(-1, len(self.corpus)), trgt).item()
+                total_loss += self.loss_function(res_scores.view(-1, len(self.corpus)), trgt).item()
 
-        return total_loss / (test_data.size()[0])
+        return total_loss / (num_batches)
 
 
     def generate_text(self, start_word = "man", num_words = 5):
