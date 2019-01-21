@@ -119,7 +119,9 @@ class LMTrainer():
               hidden_size = 256,
               emb_dim = 100,
               learning_rate = 10,
-              dropout = 0.1
+              dropout = 0.1,
+              valid = None,
+              save_model = None
               ):
 
         if torch.cuda.is_available():
@@ -137,11 +139,15 @@ class LMTrainer():
 
         num_batches = train_data.size()[0] // (batch_size * self.max_len)
 
-        total_loss = 0
-        start_time = time.time()
-        hidden = self.model.init_hidden(batch_size)
+        epoch_time = time.time()
         for epoch in range(0, n_epoch):
+            self.model.train()
+            total_loss = 0
+            hidden = self.model.init_hidden(batch_size)
+
+            batch_time = time.time()
             for i in range(num_batches):
+
                 batch = train_data[i*batch_size:i*batch_size+self.max_len*batch_size]
                 target = train_data[i*batch_size+1:i*batch_size+1+self.max_len*batch_size]
 
@@ -158,14 +164,19 @@ class LMTrainer():
 
                 total_loss+=loss.data
                 if i>0 and i%20 == 0:
-                    end = time.time() - start_time
+                    end = time.time() - batch_time
                     print("epoch {}/{} batch {}/{} PP: {} time {}".format(epoch, n_epoch, i, num_batches, math.exp(total_loss.item()/20), end))
-                    start_time = time.time()
+                    batch_time = time.time()
                     total_loss = 0
-            val_loss = self.eval("data/ptb.valid.txt", 32)
-            self.model.train()
-            scheduler.step(val_loss)
-        self.model.save_model("models/rnn")
+            if valid is not None:
+                val_loss = self.eval(valid, batch_size)
+                scheduler.step(val_loss)
+            end_epoch = time.time() - epoch_time
+            print("epoch: {}/{} validation PP: {} time: {}".format(epoch, n_epoch, math.exp(val_loss), end_epoch))
+            epoch_time = time.time()
+
+        if save_model is not None:
+            self.model.save_model(save_model)
 
     def eval(self, test_file, batch_size):
 
@@ -176,8 +187,6 @@ class LMTrainer():
 
         test_data = self.prepare_data(test_file)
         self.model.eval()
-
-        print("========== eval ============")
 
         total_loss = 0
         hidden = self.model.init_hidden(batch_size)
@@ -193,20 +202,24 @@ class LMTrainer():
                 trgt = target.view(-1).to(device=device)
 
                 res_scores, hidden = self.model(inpt, hidden)
-                total_loss += len(batch) * self.loss_function(res_scores.view(-1, len(self.corpus)), trgt).item()
+                total_loss += len(inpt) * self.loss_function(res_scores.view(-1, len(self.corpus)), trgt).item()
 
-        print(math.exp(total_loss / (len(test_data) -1)))
-        return total_loss /  (len(test_data) -1)
+        return total_loss / (num_batches*batch_size)
 
 
     def generate_text(self, start_word = "man", num_words = 5):
+
+            if torch.cuda.is_available():
+                device = torch.device('cuda')
+            else:
+                device = torch.device('cpu')
 
             res = [start_word]
 
             with torch.no_grad():
                 hidden = self.model.init_hidden(1)
 
-                input = torch.LongTensor([self.corpus.get_idx_by_wrd(start_word)]).unsqueeze(0)
+                input = torch.LongTensor([self.corpus.get_idx_by_wrd(start_word)]).unsqueeze(0).to(device)
 
                 for i in range(num_words):
                     prediction, hidden = self.model(input, hidden)
@@ -218,7 +231,7 @@ class LMTrainer():
                         if w>max_prob:
                             best_next = i
                     res.append(best_next)
-                    input = torch.LongTensor([best_next]).unsqueeze(0)
+                    input = torch.LongTensor([best_next]).unsqueeze(0).to(device)
 
             for idx in res:
                 print(self.corpus.get_wrd_by_idx(idx))
@@ -230,14 +243,16 @@ if __name__ == "__main__":
 
     arg_parser.add_argument("--train", default="data/ptb.train.txt")
     arg_parser.add_argument("--test", default="data/ptb.test.txt")
+    arg_parser.add_argument("--valid", default="data/ptb.test.txt")
+    arg_parser.add_argument("--save", default="models/lstm")
     arg_parser.add_argument("--vocab", default = None)
-    arg_parser.add_argument("--max-seq-length", default=50)
-    arg_parser.add_argument("--bs", default=32)
-    arg_parser.add_argument("--epochs", default=10)
-    arg_parser.add_argument("--nlayers", default=1)
-    arg_parser.add_argument("--hs", default=256)
-    arg_parser.add_argument("--embd", default=100)
-    arg_parser.add_argument("--lr", default=0.001)
+    arg_parser.add_argument("--max-seq-length", type=int, default=50)
+    arg_parser.add_argument("--bs", type=int, default=32)
+    arg_parser.add_argument("--epochs", type=int, default=10)
+    arg_parser.add_argument("--nlayers", type=int, default=1)
+    arg_parser.add_argument("--hs", type=int, default=256)
+    arg_parser.add_argument("--embd", type=int, default=100)
+    arg_parser.add_argument("--lr", type=float, default=0.001)
 
     args = arg_parser.parse_args()
 
@@ -249,8 +264,9 @@ if __name__ == "__main__":
         trainer.build_vocab(args.train)
 
     trainer.train(args.train, n_epoch=args.epochs, batch_size=args.bs,
-                  hidden_size=args.hs, emb_dim=args.embd, learning_rate=args.lr)
-    trainer.eval(args.test, 10)
+                  hidden_size=args.hs, emb_dim=args.embd, learning_rate=args.lr, valid=args.valid, save_model=args.save)
+    test_loss = trainer.eval(args.test, 10)
+    print("test PP: {}".format(math.exp(test_loss)))
 
 
     trainer.generate_text()
